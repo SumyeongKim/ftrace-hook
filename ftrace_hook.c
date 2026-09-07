@@ -15,6 +15,9 @@
 #include <linux/uaccess.h>
 #include <linux/version.h>
 #include <linux/kprobes.h>
+#include <linux/cred.h>
+#include <linux/uidgid.h>
+#include <linux/audit.h>
 
 MODULE_DESCRIPTION("Example module hooking clone() and execve() via ftrace");
 MODULE_AUTHOR("ilammy <a.lozovsky@gmail.com>");
@@ -336,6 +339,31 @@ static asmlinkage long fh_sys_execve(const char __user *filename,
 }
 #endif
 
+#ifdef PTREGS_SYSCALL_STUBS
+static asmlinkage long (*real_sys_openat)(const struct pt_regs *regs);
+
+static asmlinkage long fh_sys_openat(const struct pt_regs *regs) {
+	char *kernel_filename = NULL;
+	long ret, copied;
+	kuid_t uid;
+	uid_t loginuid;
+
+	kernel_filename = duplicate_filename((void*)regs->si);
+	uid = current_uid();
+	loginuid = from_kuid(&init_user_ns, audit_get_loginuid(current));
+
+	ret = real_sys_openat(regs);
+
+	if (kernel_filename && strncmp(kernel_filename, "/tmp/test", 9) == 0) {
+		pr_info("openat: %s uid=%u loginuid=%u pid=%d comm=%s -> ret=%ld\n", kernel_filename, from_kuid(&init_user_ns, uid), loginuid, current->pid, current->comm, ret);
+	}
+
+	kfree(kernel_filename);
+	return ret;
+}
+#endif
+
+
 /*
  * x86_64 kernels have a special naming convention for syscall entry points in newer kernels.
  * That's what you end up with if an architecture has 3 (three) ABIs for system calls.
@@ -354,8 +382,9 @@ static asmlinkage long fh_sys_execve(const char __user *filename,
 	}
 
 static struct ftrace_hook demo_hooks[] = {
-	HOOK("sys_clone",  fh_sys_clone,  &real_sys_clone),
+	// HOOK("sys_clone",  fh_sys_clone,  &real_sys_clone),
 	HOOK("sys_execve", fh_sys_execve, &real_sys_execve),
+	HOOK("sys_openat", fh_sys_openat, &real_sys_openat),
 };
 
 static int fh_init(void)
