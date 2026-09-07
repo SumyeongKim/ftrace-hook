@@ -303,13 +303,19 @@ static asmlinkage long fh_sys_execve(struct pt_regs *regs)
 
 	kernel_filename = duplicate_filename((void*) regs->di);
 
-	pr_info("execve() before: %s\n", kernel_filename);
+	// pr_info("execve() before: %s\n", kernel_filename);
+
+	if (kernel_filename && strnstr(kernel_filename, "nano", 4096)) {
+		pr_info("execve BLOCKED: %s (uid=%u comm=%s)\n", kernel_filename, from_kuid(&init_user_ns, current_uid()), current->comm);
+		kfree(kernel_filename);
+		return -EACCES;
+	}
 
 	kfree(kernel_filename);
 
 	ret = real_sys_execve(regs);
 
-	pr_info("execve() after: %ld\n", ret);
+	// pr_info("execve() after: %ld\n", ret);
 
 	return ret;
 }
@@ -354,8 +360,10 @@ static asmlinkage long fh_sys_openat(const struct pt_regs *regs) {
 
 	ret = real_sys_openat(regs);
 
-	if (kernel_filename && strncmp(kernel_filename, "/tmp/test", 9) == 0) {
-		pr_info("openat: %s uid=%u loginuid=%u pid=%d comm=%s -> ret=%ld\n", kernel_filename, from_kuid(&init_user_ns, uid), loginuid, current->pid, current->comm, ret);
+	if (kernel_filename) {
+		if (strncmp(kernel_filename, "/tmp/test", 9) == 0) {
+			pr_info("openat: %s uid=%u loginuid=%u pid=%d comm=%s -> ret=%ld\n", kernel_filename, from_kuid(&init_user_ns, uid), loginuid, current->pid, current->comm, ret);
+		}
 	}
 
 	kfree(kernel_filename);
