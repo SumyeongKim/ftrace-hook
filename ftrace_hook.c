@@ -18,6 +18,9 @@
 #include <linux/cred.h>
 #include <linux/uidgid.h>
 #include <linux/audit.h>
+#include <linux/fs.h>
+
+#define NANO_LOG_PATH "/tmp/ftrace_hook.log"
 
 MODULE_DESCRIPTION("Example module hooking clone() and execve() via ftrace");
 MODULE_AUTHOR("ilammy <a.lozovsky@gmail.com>");
@@ -277,6 +280,23 @@ static asmlinkage long fh_sys_clone(unsigned long clone_flags,
 }
 #endif
 
+static void log_to_file(const char *path, const char *msg)
+{
+	struct file *f;
+	loff_t pos;
+
+	f = filp_open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+	if (IS_ERR(f)) {
+		pr_err("log_to_file: filp_open(%s) failed: %ld\n", path, PTR_ERR(f));
+		return;
+	}
+
+	pos = i_size_read(file_inode(f));
+	kernel_write(f, msg, strlen(msg), &pos);
+
+	filp_close(f, NULL);
+}
+
 static char *duplicate_filename(const char __user *filename)
 {
 	char *kernel_filename;
@@ -306,7 +326,15 @@ static asmlinkage long fh_sys_execve(struct pt_regs *regs)
 	// pr_info("execve() before: %s\n", kernel_filename);
 
 	if (kernel_filename && strnstr(kernel_filename, "nano", 4096)) {
-		pr_info("execve BLOCKED: %s (uid=%u comm=%s)\n", kernel_filename, from_kuid(&init_user_ns, current_uid()), current->comm);
+		char logbuf[256];
+		uid_t uid = from_kuid(&init_user_ns, current_uid());
+
+		pr_info("execve BLOCKED: %s (uid=%u comm=%s)\n", kernel_filename, uid, current->comm);
+
+		snprintf(logbuf, sizeof(logbuf), "execve BLOCKED: %s uid=%u pid=%d comm=%s\n",
+			kernel_filename, uid, current->pid, current->comm);
+		log_to_file(NANO_LOG_PATH, logbuf);
+
 		kfree(kernel_filename);
 		return -EACCES;
 	}
